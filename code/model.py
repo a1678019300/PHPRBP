@@ -1,7 +1,12 @@
+import os
+
+import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
 from imblearn.over_sampling import ADASYN
+from sklearn.model_selection import StratifiedKFold
+
 
 class SEBlock(nn.Module):
     def __init__(self, channel, reduction):
@@ -92,8 +97,7 @@ class CNNModel(nn.Module):
         return x
 
 
-def data_augmentation(RBP_combined, RBP_labels):
-
+def data_augmentation(RBP_combined, RBP_labels, save_dir):
     label_counts = pd.Series(RBP_labels).value_counts()
     mean_count = label_counts.iloc[1:-1].mean()
     labels_to_augment = label_counts[label_counts < mean_count].index
@@ -101,4 +105,18 @@ def data_augmentation(RBP_combined, RBP_labels):
     smote = ADASYN(sampling_strategy=sampling_strategy)
     augmented_embeddings, augmented_labels = smote.fit_resample(RBP_combined, RBP_labels)
 
-    return augmented_embeddings, augmented_labels
+    skf = StratifiedKFold(n_splits=5, shuffle=True)
+    for fold, (train_idx, test_idx) in enumerate(skf.split(augmented_embeddings, augmented_labels)):
+        train_embeddings, test_embeddings = augmented_embeddings[train_idx], augmented_embeddings[test_idx]
+        train_labels, test_labels = augmented_labels[train_idx], augmented_labels[test_idx]
+
+        fold_dir = os.path.join(save_dir, f'fold_{fold + 1}')
+        if not os.path.exists(fold_dir):
+            os.makedirs(fold_dir)
+
+        np.save(os.path.join(fold_dir, 'train_embeddings.npy'), train_embeddings)
+        np.save(os.path.join(fold_dir, 'train_labels.npy'), train_labels)
+        np.save(os.path.join(fold_dir, 'test_embeddings.npy'), test_embeddings)
+        np.save(os.path.join(fold_dir, 'test_labels.npy'), test_labels)
+
+    return save_dir

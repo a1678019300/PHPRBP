@@ -4,7 +4,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
-from sklearn.model_selection import StratifiedKFold
 from tqdm import tqdm
 from model import CNNModel, data_augmentation
 from utils import get_RBP_embedding, RBPDataset, calculate_metrics
@@ -13,7 +12,9 @@ from utils import get_RBP_embedding, RBPDataset, calculate_metrics
 parser = argparse.ArgumentParser(description="Main script of PHPRBP.")
 parser.add_argument('--gpu', type=int, default=0)
 parser.add_argument('--dataset_name', type=str, default='Dataset1')
-parser.add_argument('--PLM_name', type=str, default='PHPRBP')
+parser.add_argument('--model_name', type=str, default='PHPRBP')
+parser.add_argument('--host_label', type=str, default='Host Genus',
+                    help="Host Phylum, Host Class, Host Order, Host Family, Host Genus, Host Species")
 parser.add_argument('--batch_size', type=int)
 parser.add_argument('--reduction', type=int)
 parser.add_argument('--drop_prob', type=float)
@@ -24,22 +25,26 @@ args = parser.parse_args()
 device = torch.device(f'cuda:{args.gpu}' if torch.cuda.is_available() else 'cpu')
 RBP_embeddings_labels_PLM1 = get_RBP_embedding(args.dataset_name, 'ESM2')
 RBP_embeddings_labels_PLM2 = get_RBP_embedding(args.dataset_name, 'ProtT5')
-RBP_embeddings_PLM1 = RBP_embeddings_labels_PLM1.iloc[:, :-1].values.astype(np.float32)
-RBP_embeddings_PLM2 = RBP_embeddings_labels_PLM2.iloc[:, :-1].values.astype(np.float32)
+column_names_1 = [str(i) for i in range(1, 1281)]
+RBP_embeddings_PLM1 = RBP_embeddings_labels_PLM1[column_names_1].values.astype(np.float32)
+column_names_2 = [str(i) for i in range(1, 1025)]
+RBP_embeddings_PLM2 = RBP_embeddings_labels_PLM2[column_names_2].values.astype(np.float32)
+
 RBP_embeddings_combined = np.concatenate((RBP_embeddings_PLM1, RBP_embeddings_PLM2), axis=1)
-RBP_labels = RBP_embeddings_labels_PLM1.iloc[:, -1].values.astype(np.int64)
+RBP_labels = RBP_embeddings_labels_PLM1[args.host_label].values.astype(np.int64)
 output_size = len(set((list(RBP_labels))))
 
-augmented_embeddings, augmented_labels = data_augmentation(RBP_embeddings_combined, RBP_labels)
-
-skf = StratifiedKFold(n_splits=5, shuffle=True)
+save_dir = f'../data/{args.dataset_name}/cross_validation_data'
+data_augmentation(RBP_embeddings_combined, RBP_labels, save_dir)
 fold_results = []
 
-for fold, (train_idx, test_idx) in enumerate(skf.split(augmented_embeddings, augmented_labels)):
-    print(f'Fold {fold + 1}')
-
-    train_embeddings, test_embeddings = augmented_embeddings[train_idx], augmented_embeddings[test_idx]
-    train_labels, test_labels = augmented_labels[train_idx], augmented_labels[test_idx]
+for fold in range(1, 6):
+    print(f'Fold {fold}')
+    fold_dir = os.path.join(save_dir, f'fold_{fold}')
+    train_embeddings = np.load(os.path.join(fold_dir, 'train_embeddings.npy'))
+    train_labels = np.load(os.path.join(fold_dir, 'train_labels.npy'))
+    test_embeddings = np.load(os.path.join(fold_dir, 'test_embeddings.npy'))
+    test_labels = np.load(os.path.join(fold_dir, 'test_labels.npy'))
 
     train_dataset = RBPDataset(train_embeddings, train_labels)
     test_dataset = RBPDataset(test_embeddings, test_labels)
@@ -54,7 +59,7 @@ for fold, (train_idx, test_idx) in enumerate(skf.split(augmented_embeddings, aug
     drop_prob = args.drop_prob
 
     model = CNNModel(in_channels1=in_channels1, in_channels2=in_channels2, out_channels=output_channels,
-                           kernel_size=kernel_size, output_size=output_size, reduction=reduction, drop_prob=drop_prob).to(device)
+                     kernel_size=kernel_size, output_size=output_size, reduction=reduction, drop_prob=drop_prob).to(device)
 
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam([param for name, param in model.named_parameters()], lr=3e-4, weight_decay=0.00001)
@@ -92,7 +97,7 @@ for fold, (train_idx, test_idx) in enumerate(skf.split(augmented_embeddings, aug
         ACC, F1, MCC, precision, recall))
 
     fold_results.append({
-        'fold': fold + 1,
+        'fold': fold,
         'accuracy': ACC,
         'f1': F1,
         'mcc': MCC,
@@ -121,14 +126,14 @@ print(f'Average - accuracy: {avg_accuracy:.4f} ± {std_accuracy:.4f}, '
       f'precision: {avg_precision:.4f} ± {std_precision:.4f}, '
       f'recall: {avg_recall:.4f} ± {std_recall:.4f}, ')
 
-output_file = f"../result/{args.dataset_name}/{args.PLM_name}_results.txt"
+output_file = f"../result/{args.dataset_name}/{args.model_name}_results.txt"
 
 output_dir = os.path.dirname(output_file)
 if not os.path.exists(output_dir):
     os.makedirs(output_dir)
 
 with open(output_file, "a") as f:
-    f.write(f"Results for model: {args.PLM_name}\n")
+    f.write(f"Results for model: {args.model_name}\n")
 
     for result in fold_results:
         f.write(f"Fold {result['fold']} - accuracy: {result['accuracy']:.4f}, "

@@ -35,12 +35,17 @@ for dataset_name in dataset_name_list:
 
     embedding_df = pd.DataFrame(embeddings, columns=[f'{i+1}' for i in range(len(embedding))])
 
-    rbp_labels = rbp_all_info['Host']
-    rbp_embeddings_labels = pd.concat([embedding_df, rbp_labels], axis=1)
+    columns_host = ['Host Phylum', 'Host Class', 'Host Order', 'Host Family', 'Host Genus']
+    if dataset_name == 'Dataset3':
+        columns_host = ['Host Phylum', 'Host Class', 'Host Order', 'Host Family', 'Host Genus', 'Host Species']
 
-    label_encoder = LabelEncoder()
-    rbp_embeddings_labels['Host'] = label_encoder.fit_transform(rbp_embeddings_labels['Host'])
+    host_df = rbp_all_info[columns_host]
+    rbp_embeddings_labels = pd.concat([host_df, embedding_df], axis=1)
 
+    le = LabelEncoder()
+    for column in columns_host:
+        if column in rbp_embeddings_labels.columns:
+            rbp_embeddings_labels[column] = le.fit_transform(rbp_embeddings_labels[column])
 
     rbp_embeddings_labels_path = f'../data/{dataset_name}/rbp_embeddings_labels_{pre_train}.csv'
     rbp_embeddings_labels.to_csv(rbp_embeddings_labels_path, index=False)
